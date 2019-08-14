@@ -30,14 +30,6 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
     protected $_canFetchTransactionInfo = true;
     protected $_canReviewPayment        = false;
 
-    // Amazon Authorization States
-    const AUTH_STATUS_PENDING   = 'Pending';
-    const AUTH_STATUS_OPEN      = 'Open';
-    const AUTH_STATUS_DECLINED  = 'Declined';
-    const AUTH_STATUS_CLOSED    = 'Closed';
-    const AUTH_STATUS_COMPLETED = 'Completed';
-
-
     /**
      * Return Amazon API
      */
@@ -96,7 +88,16 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
             $stateObject->setState(Mage_Sales_Model_Order::STATE_PROCESSING);
         }
 
-        $stateObject->setStatus($this->getConfigData('order_status'));
+        // Asynchronous Mode always returns Pending
+        if ($this->getConfigData('is_async')) {
+            // "Pending Payment" indicates async for internal use
+            $stateObject->setState(Mage_Sales_Model_Order::STATE_PENDING_PAYMENT);
+            $stateObject->setStatus('pending');
+        }
+        else {
+            $stateObject->setStatus($this->getConfigData('order_status'));
+        }
+
         $stateObject->setIsNotified(Mage_Sales_Model_Order_Status_History::CUSTOMER_NOTIFICATION_NOT_APPLICABLE);
     }
 
@@ -127,9 +128,9 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
         $status = $result->getAuthorizationStatus();
 
         switch ($status->getState()) {
-            case self::AUTH_STATUS_PENDING:
-            case self::AUTH_STATUS_OPEN:
-            case self::AUTH_STATUS_CLOSED:
+            case Amazon_Payments_Model_Api::AUTH_STATUS_PENDING:
+            case Amazon_Payments_Model_Api::AUTH_STATUS_OPEN:
+            case Amazon_Payments_Model_Api::AUTH_STATUS_CLOSED:
 
                 $payment->setTransactionId($result->getAmazonAuthorizationId());
                 $payment->setParentTransactionId($payment->getAdditionalInformation('order_reference'));
@@ -138,24 +139,26 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
                 // Add transaction
                 if ($captureNow) {
 
-                    $transactionSave = Mage::getModel('core/resource_transaction');
+                    if (!$this->getConfigData('is_async')) {
+                        $transactionSave = Mage::getModel('core/resource_transaction');
 
-                    $captureReferenceIds = $result->getIdList()->getmember();
+                        $captureReferenceIds = $result->getIdList()->getmember();
 
-                    if ($order->canInvoice()) {
-                        // Create invoice
-                        $invoice = $order
-                            ->prepareInvoice()
-                            ->register();
-                        $invoice->setTransactionId(current($captureReferenceIds));
+                        if ($order->canInvoice()) {
+                            // Create invoice
+                            $invoice = $order
+                                ->prepareInvoice()
+                                ->register();
+                            $invoice->setTransactionId(current($captureReferenceIds));
 
-                        $transactionSave
-                            ->addObject($invoice)
-                            ->addObject($invoice->getOrder());
+                            $transactionSave
+                                ->addObject($invoice)
+                                ->addObject($invoice->getOrder());
 
+                        }
+
+                        $transactionSave->save();
                     }
-
-                    $transactionSave->save();
 
                     $transactionType = Mage_Sales_Model_Order_Payment_Transaction::TYPE_CAPTURE;
                     $message = Mage::helper('payment')->__('Authorize and capture request for %s sent to Amazon Payments.', $order->getStore()->convertPrice($amount, true, false));
@@ -169,7 +172,7 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
 
                 break;
 
-            case self::AUTH_STATUS_DECLINED:
+            case Amazon_Payments_Model_Api::AUTH_STATUS_DECLINED:
                 // Cancel order reference
                 if ($status->getReasonCode() == 'TransactionTimedOut') {
                     $this->_getApi()->cancelOrderReference($payment->getTransactionId());
@@ -230,11 +233,18 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
             );
         }
 
-        $apiResult = $this->_getApi()->confirmOrderReference($orderReferenceId);
+        try {
+            $apiResult = $this->_getApi()->confirmOrderReference($orderReferenceId);
+        }
+        catch (Exception $e) {
+            Mage::throwException("Please try another Amazon payment method." . "\n\n" . substr($e->getMessage(), 0, strpos($e->getMessage(), 'Stack trace')));
+            $this->_setErrorCheck();
+            return;
+        }
 
         $payment->setIsTransactionClosed(false);
         $payment->setSkipOrderProcessing(true);
-        $message = Mage::helper('payment')->__('Order of %s sent to Amazon Payments.', $order->getStore()->convertPrice($amount, true, false));
+        $message = Mage::helper('payment')->__(($this->getConfigData('is_async') ? 'Asynchronous ' : '') . 'Order of %s sent to Amazon Payments.', $order->getStore()->convertPrice($amount, true, false));
         $payment->addTransaction(Mage_Sales_Model_Order_Payment_Transaction::TYPE_ORDER, null, false, $message);
 
 
@@ -296,13 +306,13 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
 
             // Error handling
             switch ($status->getState()) {
-                case self::AUTH_STATUS_PENDING:
-                case self::AUTH_STATUS_DECLINED:
-                case self::AUTH_STATUS_CLOSED:
+                case Amazon_Payments_Model_Api::AUTH_STATUS_PENDING:
+                case Amazon_Payments_Model_Api::AUTH_STATUS_DECLINED:
+                case Amazon_Payments_Model_Api::AUTH_STATUS_CLOSED:
                     $this->_setErrorCheck();
                     Mage::throwException('Amazon Payments capture error: ' . $status->getReasonCode() . ' - ' . $status->getReasonDescription());
                     break;
-                case self::AUTH_STATUS_COMPLETED:
+                case Amazon_Payments_Model_Api::AUTH_STATUS_COMPLETED:
                     // Already captured.
                     break;
                 default:
@@ -337,7 +347,7 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
 
         $result = $this->_getApi()->refund(
             $payment->getRefundTransactionId(),
-            $this->_getMagentoReferenceId($payment) . '-refund',
+            $this->_getMagentoReferenceId($payment) . substr(md5($this->_getMagentoReferenceId($payment) . microtime() ),-4) . '-refund',
             $amount,
             $order->getBaseCurrencyCode(),
             null,
@@ -433,7 +443,7 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
      */
     public function canUseCheckout()
     {
-        return (Mage::helper('amazon_payments')->isCheckoutAmazonSession() || $this->getConfigData('use_in_checkout'));
+        return (Mage::getSingleton('amazon_payments/config')->isEnabled() && ((Mage::helper('amazon_payments')->isCheckoutAmazonSession() && $this->getConfigData('checkout_page') == 'onepage') || $this->getConfigData('use_in_checkout')));
     }
 
 
