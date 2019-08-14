@@ -33,10 +33,11 @@ class Amazon_Payments_Model_Customer extends Mage_Customer_Model_Customer
                 $this->setWebsiteId(Mage::app()->getWebsite()->getId())->loadByEmail($amazonProfile['email']);
             }
 
+            Mage::getSingleton('customer/session')->setAmazonProfile($amazonProfile);
+
             // If Magento customer account exists and there is no association, then the Magento account
             // must be verified, as Amazon does not verify email addresses.
             if (!$row->getLoginId() && $this->getId()) {
-                Mage::getSingleton('customer/session')->setAmazonProfile($amazonProfile);
                 Mage::getSingleton('checkout/session')->setAmazonAccessTokenVerify($token);
 
                 Mage::app()->getResponse()
@@ -46,7 +47,7 @@ class Amazon_Payments_Model_Customer extends Mage_Customer_Model_Customer
                 exit;
 
             }
-            // Log user in
+            // Create account if applicable and log user in
             else {
                 // Create account
                 if (!$this->getId()) {
@@ -112,6 +113,11 @@ class Amazon_Payments_Model_Customer extends Mage_Customer_Model_Customer
                 ->setIsActive(1)
                 ->save()
                 ->sendNewAccountEmail('registered', '', Mage::app()->getStore()->getId());
+
+            // If email confirmation required, must resave customer
+            if ($this->isConfirmationRequired()) {
+                $this->setConfirmation(null)->save();
+            }
 
             $this->createAssociation($amazonProfile, $this->getId());
 

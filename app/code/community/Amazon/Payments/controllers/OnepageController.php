@@ -39,6 +39,8 @@ class Amazon_Payments_OnepageController extends Amazon_Payments_Controller_Check
                 'method' => 'amazon_payments',
                 'additional_information' => array(
                     'order_reference' => $this->getAmazonOrderReferenceId(),
+                    'billing_agreement_id' => $this->getAmazonBillingAgreementId(),
+                    'billing_agreement_consent' => $this->getAmazonBillingAgreementConsent(),
                 )
             ));
 
@@ -70,6 +72,12 @@ class Amazon_Payments_OnepageController extends Amazon_Payments_Controller_Check
                 ->setStoreId(Mage::app()->getStore()->getId())
                 ->setIsSubscribed(true)
                 ->save();
+            }
+
+            // Validate country
+            if (!$this->isCountryAllowed($this->_getCheckout()->getQuote()->getShippingAddress()->getCountry())) {
+                $result['error'] = true;
+                $result['message'] = $this->__('This order cannot be shipped to the selected country. Please use a different shipping address.');
             }
 
         }

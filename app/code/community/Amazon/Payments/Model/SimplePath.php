@@ -24,7 +24,7 @@ class Amazon_Payments_Model_SimplePath
     public function generateKeys()
     {
         $rsa = new Zend_Crypt_Rsa;
-        $keys = $rsa->generateKeys(array('private_key_bits' => 2048, 'hashAlgorithm' => 'sha1'));
+        $keys = $rsa->generateKeys(array('private_key_bits' => 2048, 'privateKeyBits' => 2048, 'hashAlgorithm' => 'sha1'));
 
         Mage::getConfig()
             ->saveConfig(self::CONFIG_XML_PATH_PUBLIC_KEY, $keys['publicKey'], 'default', 0)
@@ -57,7 +57,7 @@ class Amazon_Payments_Model_SimplePath
         $publickey = Mage::getStoreConfig(self::CONFIG_XML_PATH_PUBLIC_KEY, 0);
 
         // Generate key pair
-        if (!$publickey || $reset) {
+        if (!$publickey || $reset || strlen($publickey) < 300) {
             $keys = $this->generateKeys();
             $publickey = $keys['publicKey'];
         }
@@ -159,7 +159,7 @@ class Amazon_Payments_Model_SimplePath
             Mage::getSingleton('adminhtml/session')->addError(Mage::helper('amazon_payments')->__($e->getMessage()));
 
             $link = 'https://payments.amazon.com/help/202024240';
-            Mage::getSingleton('adminhtml/session')->addError(Mage::helper('amazon_payments')->__("If you're experiencing consistant errors with transfering keys, click <a href=\"%s\" target=\"_blank\">Manual Transfer Instructions</a> to learn more.", $link));
+            Mage::getSingleton('adminhtml/session')->addError(Mage::helper('amazon_payments')->__("If you're experiencing consistent errors with transferring keys, click <a href=\"%s\" target=\"_blank\">Manual Transfer Instructions</a> to learn more.", $link));
         }
 
         return false;
@@ -219,7 +219,7 @@ class Amazon_Payments_Model_SimplePath
      */
     public function getListenerUrl()
     {
-        $url = Mage::getUrl('amazon_payments/simplepath', array('_store' => 1, '_forced_secure' => true));
+        $url = Mage::getUrl('amazon_payments/simplepath', array('_store' => Mage::helper('amazon_payments')->getAdminStoreId(), '_forced_secure' => true));
         // Add index.php
         $baseUrl = Mage::getBaseUrl(Mage_Core_Model_Store::URL_TYPE_WEB, true);
         return str_replace($baseUrl, $baseUrl . 'index.php/', $url);
@@ -245,18 +245,31 @@ class Amazon_Payments_Model_SimplePath
         $db = Mage::getSingleton('core/resource')->getConnection('core_read');
 
         $select = $db->select()
-            ->from('core_config_data')
+            ->from(Mage::getSingleton('core/resource')->getTableName('core_config_data'))
             ->where('path IN (?)', array('web/unsecure/base_url', 'web/secure/base_url'));
 
         foreach ($db->fetchAll($select) as $row) {
             $url = parse_url($row['value']);
-            $urls[] = 'https://' . $url['host'];
+
+            if (isset($url['host'])){
+                $urls[] = 'https://' . $url['host'];
+            }
         }
+
+        // Check config files
+        foreach (Mage::app()->getStores() as $store) {
+            $storeCode = $store->getCode();
+            if ($url = (string) Mage::getConfig()->getNode('stores/' . $storeCode . '/web/secure/base_url')) {
+                $urls[] = rtrim($url, '/');
+            }
+        }
+
+        $urls = array_unique($urls);
 
         return array(
             'locale' => Mage::getStoreConfig('general/country/default'),
             'spId' => self::PARAM_SP_ID,
-            'allowedLoginDomains[]' => array_unique($urls),
+            'allowedLoginDomains[]' => $urls,
             'spSoftwareVersion' => Mage::getVersion(),
             'spAmazonPluginVersion' => Mage::getConfig()->getModuleConfig("Amazon_Payments")->version,
         );
@@ -275,7 +288,7 @@ class Amazon_Payments_Model_SimplePath
             //'spUrl'         => Mage::helper("adminhtml")->getUrl('adminhtml/amazon_simplepath/spurl'),
             'importUrl'     => Mage::helper('adminhtml')->getUrl('adminhtml/amazon_simplepath/import'),
             'isSecure'      => (int) (Mage::app()->getFrontController()->getRequest()->isSecure()),
-            'isUsa'         => (int) (Mage::helper('amazon_payments')->getAdminConfig('general/country/default') == 'US'),
+            'isUsa'         => (int) (Mage::helper('amazon_payments')->getAdminConfig('general/country/default') == 'US' && Mage::helper('amazon_payments')->getAdminRegion() != 'eu'),
             'hasOpenssl'    => (int) (extension_loaded('openssl')),
             'formParams'    => $this->getFormParams(),
         );
