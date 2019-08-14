@@ -18,6 +18,7 @@ class Amazon_Payments_Model_Api
     const AUTH_STATUS_DECLINED  = 'Declined';
     const AUTH_STATUS_CLOSED    = 'Closed';
     const AUTH_STATUS_COMPLETED = 'Completed';
+    const AUTH_STATUS_SUSPENDED = 'Suspended';
 
     protected $api;
     protected $log_file = 'amazon.log';
@@ -239,6 +240,31 @@ class Amazon_Payments_Model_Api
             $result = $response->getGetOrderReferenceDetailsResult();
             if ($result->isSetOrderReferenceDetails()) {
                 return $result->getOrderReferenceDetails();
+            }
+        }
+
+        return $response;
+    }
+
+    /**
+     * GetAuthorizationDetails
+     *
+     * @param string $amazonAuthorizationId
+     * @return OffAmazonPaymentsService_Model_GetAuthorizationDetails
+     * @link http://docs.developer.amazonservices.com/en_US/off_amazon_payments/OffAmazonPayments_GetAuthorizationDetails.html
+     */
+    public function getAuthorizationDetails($amazonAuthorizationId)
+    {
+        $request = array(
+            'AmazonAuthorizationId' => $amazonAuthorizationId,
+        );
+
+        $response = $this->request('getAuthorizationDetails', $request);
+
+        if ($response && $response->isSetGetAuthorizationDetailsResult()) {
+            $result = $response->getGetAuthorizationDetailsResult();
+            if ($result->isSetAuthorizationDetails()) {
+                return $result->getAuthorizationDetails();
             }
         }
 
