@@ -1,0 +1,16 @@
+{
+    "name": "OpenMageModuleFostering/login_and_pay_for_magento",
+    "type": "magento-module",
+    "license": "Apache-License,-Version-2.0",
+    "homepage": "",
+    "description": "Let millions of Amazon customers login and pay on your site with information stored in their Amazon account.",
+    "authors": [
+    {
+        "name": "Amazon Payments",
+        "email": "payments-cp-devel@amazon.com"
+    }
+],
+    "suggest": {
+        "magento-hackathon/magento-composer-installer": "*"
+    }
+}
