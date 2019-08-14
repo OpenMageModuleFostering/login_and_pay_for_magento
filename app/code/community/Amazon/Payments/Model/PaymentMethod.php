@@ -21,7 +21,7 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
     protected $_canRefundInvoicePartial = true;
     protected $_canVoid                 = true;  // Can void transactions online?
     protected $_canUseInternal          = false; // Can use this payment method in administration panel?
-    protected $_canUseCheckout          = true;  // Can show this payment method as an option on checkout payment page?
+    protected $_canUseCheckout          = false; // Can show this payment method as an option on checkout payment page?
     protected $_canUseForMultishipping  = false; // Is this payment method suitable for multi-shipping checkout?
     protected $_isInitializeNeeded      = true;
     protected $_canFetchTransactionInfo = true;
@@ -61,6 +61,22 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
     }
 
     /**
+     * Set session error checking for declined orders
+     */
+    protected function _setErrorCheck()
+    {
+        Mage::getSingleton('checkout/session')->setAmazonErrorCheck(true);
+    }
+
+    /**
+     * Get session error checking
+     */
+    protected function _getErrorCheck()
+    {
+        return Mage::getSingleton('checkout/session')->getAmazonErrorCheck();
+    }
+
+    /**
      * Instantiate state and set it to state object
      *
      * @param string $paymentAction
@@ -93,7 +109,7 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
 
         $result = $this->_getApi()->authorize(
             $payment->getTransactionId(),
-            $this->_getMagentoReferenceId($payment) . '-authorize',
+            $this->_getMagentoReferenceId($payment) . '-auth',
             $amount,
             $order->getBaseCurrencyCode(),
             $captureNow,
@@ -152,9 +168,11 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
                     $this->_getApi()->cancelOrderReference($payment->getTransactionId());
                 }
 
+                $this->_setErrorCheck();
                 Mage::throwException("Amazon could not process your order.\n\n" . $status->getReasonCode() . " (" . $status->getState() . ")\n" . $status->getReasonDescription());
                 break;
             default:
+                $this->_setErrorCheck();
                 Mage::throwException('Amazon could not process your order.');
                 break;
         }
@@ -171,6 +189,9 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
      */
     public function order(Varien_Object $payment, $amount)
     {
+        if (!$amount) {
+            return $this;
+        }
 
         $orderReferenceId = $payment->getAdditionalInformation('order_reference');
 
@@ -182,9 +203,12 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
         $payment->setTransactionId($orderReferenceId);
         $order = $payment->getOrder();
 
-        $orderReferenceDetails = $this->_getApi()->getOrderReferenceDetails($orderReferenceId);
+        // If previous order submission failed (e.g. bad credit card), must validate order status to prevent multiple setOrderReferenceDetails()
+        if ($this->_getErrorCheck()) {
+            $orderReferenceDetails = $this->_getApi()->getOrderReferenceDetails($orderReferenceId);
+        }
 
-        if ($orderReferenceDetails->getOrderReferenceStatus()->getState() == 'Draft') {
+        if (!$this->_getErrorCheck() || $orderReferenceDetails->getOrderReferenceStatus()->getState() == 'Draft') {
             $apiResult = $this->_getApi()->setOrderReferenceDetails(
                 $orderReferenceId,
                 $order->getBaseGrandTotal(),
@@ -263,12 +287,14 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
                 case self::AUTH_STATUS_PENDING:
                 case self::AUTH_STATUS_DECLINED:
                 case self::AUTH_STATUS_CLOSED:
+                    $this->_setErrorCheck();
                     Mage::throwException('Amazon Payments capture error: ' . $status->getReasonCode() . ' - ' . $status->getReasonDescription());
                     break;
                 case self::AUTH_STATUS_COMPLETED:
                     // Already captured.
                     break;
                 default:
+                    $this->_setErrorCheck();
                     Mage::throwException('Amazon Payments capture error.');
                     break;
             }
@@ -279,6 +305,7 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
 
         }
         else {
+            $this->_setErrorCheck();
             Mage::throwException('Unable to capture payment at this time. Please try again later.');
         }
 
@@ -384,6 +411,19 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
             }
         }
         return parent::canInvoice();
+    }
+
+
+    /**
+     * Allow payment method in checkout?
+     *
+     * Disable for third-party checkout methods.
+     *
+     * @return bool
+     */
+    public function canUseCheckout()
+    {
+        return Mage::helper('amazon_payments')->isCheckoutAmazonSession();
     }
 
 }
