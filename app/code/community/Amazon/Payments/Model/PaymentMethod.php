@@ -248,7 +248,12 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
 
         $payment->setIsTransactionClosed(false);
         $payment->setSkipOrderProcessing(true);
-        $message = Mage::helper('payment')->__(($this->getConfigData('is_async') ? 'Asynchronous ' : '') . 'Order of %s sent to Amazon Payments.', $order->getStore()->convertPrice($amount, true, false));
+
+        $comment  = $this->getConfigData('is_async') ? 'Asynchronous ' : '';
+        $comment .=  $this->_getApi()->getConfig()->isSandbox() ? 'Sandbox ' : '';
+        $comment .= 'Order of %s sent to Amazon Payments.';
+        $message = Mage::helper('payment')->__($comment, $order->getStore()->convertPrice($amount, true, false));
+
         $payment->addTransaction(Mage_Sales_Model_Order_Payment_Transaction::TYPE_ORDER, null, false, $message);
 
 
@@ -447,7 +452,7 @@ class Amazon_Payments_Model_PaymentMethod extends Mage_Payment_Model_Method_Abst
      */
     public function canUseCheckout()
     {
-        return (Mage::getSingleton('amazon_payments/config')->isEnabled() && ((Mage::helper('amazon_payments')->isCheckoutAmazonSession() && $this->getConfigData('checkout_page') == 'onepage') || $this->getConfigData('use_in_checkout')));
+        return (Mage::getSingleton('amazon_payments/config')->isEnabled() && Mage::helper('amazon_payments')->isEnableProductPayments() && ((Mage::helper('amazon_payments')->isCheckoutAmazonSession() && $this->getConfigData('checkout_page') == 'onepage') || $this->getConfigData('use_in_checkout')));
     }
 
 
